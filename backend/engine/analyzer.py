@@ -7,6 +7,8 @@ from .data_model import PatientSymptomList, MedicalCorpusInput, SymptomAnalysisR
 from .query_preprocess import QueryPreprocessor
 from .rag_retriever import MedicalRAGRetriever
 from .verifier import MedicalQueryVerifier
+from .database import DBManager
+from .memory import ConversationMemory
 
 query_preprocessor = QueryPreprocessor()
 rag_retriever = MedicalRAGRetriever()
@@ -18,14 +20,28 @@ class SymptomAnalyzer:
     def __init__(self):
         # Initialize any necessary variables or configurations here
         self.client = ollama.Client(host=OLLAMA_URL)
+        self.db_manager = DBManager()
+        
 
-    def analyze(self, user_query):
+    def analyze(self, user_query,user_id, thread_id=None):
+        # Initialize conversation memory
+        memory = ConversationMemory(self.db_manager, user_id, thread_id)
+        ctx = memory.get_working_context()
+        # Build context string for prompts
+        history_str = ctx['history']
+        shared_str = json.dumps(ctx['shared_memory'], indent=1)
+        thread_str = json.dumps(ctx['thread_memory'], indent=1)
+        
+        
         system_prompt = """
            You are a clinical language formatter. Your only job is to convert 
             a patient's natural language symptom description into 5 structured 
             clinical reformulations. Each variant must use a different 
             clinical framing style to maximize medical entity coverage.
-
+            ==== SHARED CONTEXT ====
+            {shared_str}
+            ==== WORKING MEMORY CONTEXT ====
+            {thread_str}
             Rules:
             - Preserve all symptoms mentioned, do not add or invent new ones
             - Do not speculate, diagnose, or suggest conditions
@@ -56,14 +72,18 @@ class SymptomAnalyzer:
                 ... repeat for variants 2-5
             ]
         """
-        
+        messages = [
+            {"role": "system", "content": system_prompt},
+           
+        ]
+        for turn in history_str:
+            messages.append({"role": turn['query'], "content": turn['query']})
+            messages.append({"role": "assistant", "content": turn['analysis']})
+        messages.append({"role": "user", "content": user_query})
         logger.info(f"Analyzing symptoms: {user_query}")
         response = self.client.chat(
             model=OLLAMA_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_query}
-            ],
+            messages=messages,
             format=PatientSymptomList.model_json_schema(), # Force JSON structure
             options={'temperature': 0.2} # Low temperature for medical accuracy
         )
@@ -83,6 +103,10 @@ class SymptomAnalyzer:
 
         system_prompt_pass_2 = f"""
             You are a medical search query specialist.
+            ==== SHARED CONTEXT ====
+            {shared_str}
+            ==== WORKING MEMORY CONTEXT ====
+            {thread_str}
             Your ONLY job is to generate optimized search queries for PubMed"""
         user_prompt_pass_2 = f"""
             and ICD-11 based on the patient input below.
@@ -141,6 +165,10 @@ class SymptomAnalyzer:
 
             Your job is to synthesize ALL inputs into a clear, evidence-based 
             clinical assessment.
+            ==== SHARED CONTEXT ====
+            {shared_str}
+            ==== WORKING MEMORY CONTEXT ====
+            {thread_str}
 
             Output strict JSON only. No explanation. No preamble. No markdown.
 
@@ -212,12 +240,66 @@ class SymptomAnalyzer:
         symptom_analysis_output = SymptomAnalysisResponse.model_validate_json(response['message']['content'])
         # Convert to dict for easier downstream use
         symptom_analysis = symptom_analysis_output.model_dump()
-        
-        return {
+        response_data = {
             "symptom_variants": symptom_dicts,
             "generated_queries": api_inputs,
             "pubmed_results": pubmed_results,
             "icd11_results": icd11_results,
             "symptom_analysis": symptom_analysis
         }
+        full_history = memory.fetch_entire_history()
+        system_prompt_summarize_thread = """
+            You are a conversation summarizer for a medical symptom analysis tool.
+            Your job is to read the entire conversation history and generate a concise summary
+            that captures the patient's main symptoms, the clinical reasoning process, and the final assessment.
+            The summary should be in clear for medical person.
+            Current memory context:
+            {thread_str}
+            Conversation history:
+            
+        """    
+        messages = [
+            {"role": "system", "content": system_prompt_summarize_thread},
+        ]
+        for turn in full_history:
+            messages.append({"role": turn['query'], "content": turn['query']})
+            messages.append({"role": "assistant", "content": turn['analysis']})
+        messages.append({"role": "user", "content": user_query})
+        messages.append({"role": "assistant", "content": response_data})
+        summary_response = self.client.chat(
+            model=OLLAMA_MODEL,
+            messages=messages,
+            format={"type": "string"}, # Just return a text summary
+            options={"temperature": 0.5}
+        )
+        thread_summary = summary_response['message']['content']
+        memory.save_to_memory("summary", summary_response['message']['content'], shared=False)
+        system_prompt_summarize_shared = """
+            You are a summarizer for a medical symptom analysis tool.
+            Your job is to read the entire shared memory context and generate a concise summary
+            Current shared memory context:
+            {shared_str}
+            Thread summary:
+            {thread_str}
+            Generate an updated shared memory summary that captures the patient's overall clinical picture and any important context that should be remembered across threads. This should be concise but informative for future conversations.
+        """
+        messages = [
+            {"role": "system", "content": system_prompt_summarize_shared},
+        ]
+        for turn in full_history:
+            messages.append({"role": turn['query'], "content": turn['query']})
+            messages.append({"role": "assistant", "content": turn['analysis']})
+        messages.append({"role": "user", "content": user_query})
+        messages.append({"role": "assistant", "content": response_data})
+        shared_summary_response = self.client.chat(
+            model=OLLAMA_MODEL,
+            messages=messages,
+            format={"type": "string"}, # Just return a text summary
+            options={"temperature": 0.5}
+        )
+        shared_summary = shared_summary_response['message']['content']
+        memory.save_to_memory("shared_summary", shared_summary, shared=True)
+        memory.save_turn(user_query, response_data)
+
+        return response_data
     
