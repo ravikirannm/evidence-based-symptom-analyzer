@@ -59,4 +59,4 @@ class SymptomAnalysisResponse(BaseModel):
     follow_up_questions: List[FollowUp]
     red_flags: List[RedFlag]
     recommended_tests: List[Test]
-    disclaimer: str = "This is not a medical diagnosis. Please consult a qualified healthcare professional."
+   

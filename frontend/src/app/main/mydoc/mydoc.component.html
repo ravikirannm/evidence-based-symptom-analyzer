@@ -1,0 +1,100 @@
+<div class="dashboard-container">
+    <!-- Left: Conversation History -->
+    <aside class="sidebar history">
+        <div class="brand">Health.AI</div>
+        <nav class="convo-list">
+            <ng-container *ngFor="let thread of threads">
+                <div class="convo-item" [class.active]="thread.thread_id === selectedThread.value"
+                    (click)="selectedThread.setValue(thread.thread_id)">
+                    {{ thread.title || 'Untitled Consultation' }}
+                </div>
+            </ng-container>
+
+        </nav>
+    </aside>
+
+    <!-- Middle: Chat Interface -->
+    <main class="chat-viewport">
+        <header class="chat-header">
+            <h1>Consultation Alpha</h1>
+            <span class="status">Live Analysis</span>
+        </header>
+        <ng-container *ngIf="conversationHistory.length > 0; else noHistory">
+            <div class="message-area">
+                <div *ngFor="let turn of conversationHistory" class="msg"
+                    [ngClass]="turn.role === 'assistant' ? 'bot' : 'user'">
+                    {{ turn.message }}
+                </div>
+            </div>
+        </ng-container>
+
+        <ng-template #noHistory>
+            <div class="message-area" *ngIf="!isLoading">
+                <div class="msg bot">No conversation history found. Start a new consultation by typing your clinical
+                    query below.</div>
+            </div>
+        </ng-template>
+
+        <!-- Live Streaming Message -->
+        <div class="msg bot live-stream" *ngIf="currentBotMessage">
+            {{ currentBotMessage }}
+        </div>
+
+        <!-- Chain of Thought / Progress Area -->
+        <div *ngIf="isLoading" class="message-area">
+            <div class="thought-stream">
+                <div class="loading-dot"></div>
+                <div class="progress-text">
+                    <span class="label">Processing:</span>
+                    <span class="status-msg">{{ progressMessage }}</span>
+                </div>
+            </div>
+        </div>
+
+
+
+
+        <div class="input-container">
+            <input [formControl]="queryControl" type="text" placeholder="Type a clinical query..."
+                (keydown.enter)="sendMessage()">
+        </div>
+    </main>
+
+    <!-- Right: Medical Intelligence -->
+    <aside class="sidebar intelligence">
+        Dynamic Assessment
+        <section class="intel-block" *ngIf="symptomAnalysis">
+            <h3>Clinical Assessment</h3>
+            <div class="condition-item" *ngFor="let condition of symptomAnalysis.possible_conditions">
+                <strong>{{ condition.name }}</strong>
+                <span class="badge likelihood">{{ condition.likelihood }}</span>
+                <p class="summary-text">{{ condition.reasoning }}</p>
+            </div>
+        </section>
+
+        <!-- ICD-11 Codes -->
+        <section class="intel-block" *ngIf="icd11Results.length > 0">
+            <h3>ICD-11 Targets</h3>
+            <div class="icd-badge" *ngFor="let icd of icd11Results">
+                {{ icd.code }} - {{ icd.title }}
+            </div>
+        </section>
+
+        <!-- PubMed References -->
+        <section class="intel-block" *ngIf="pubmedResults.length > 0">
+            <h3>PubMed Corroboration</h3>
+            <ul class="intel-links">
+                <li *ngFor="let article of pubmedResults | slice:0:3">
+                    <a [href]="'https://pubmed.ncbi.nlm.nih.gov/' + article.pmid" target="_blank">
+                        {{ article.title }}
+                    </a>
+                </li>
+            </ul>
+        </section>
+
+        <!-- Empty State -->
+        <section class="intel-block empty-state" *ngIf="!symptomAnalysis && !isLoading">
+            <p class="summary-text">Awaiting input to generate medical interoperability data.</p>
+        </section>
+    </aside>
+</div>

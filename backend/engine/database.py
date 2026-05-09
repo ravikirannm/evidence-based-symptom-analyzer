@@ -1,13 +1,17 @@
 import psycopg2
 from pymongo import MongoClient
 from psycopg2.extras import RealDictCursor
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-MONGO_URI = "mongodb://localhost:27017/"
-PG_CONN_STR = "dbname=medical_db user=user password=pass host=localhost"
+MONGO_URI = "mongodb://mongodb:27017/"
+PG_CONN_STR = "dbname=mydb user=user password=pass host=postgres"
 
 class DBManager:
     def __init__(self):
+        logger.info("Initializing database connections...")
         self.mongo = MongoClient(MONGO_URI)["medical_analyzer"]
         self.pg = psycopg2.connect(PG_CONN_STR)
         self.pg.autocommit = True

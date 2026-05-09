@@ -3,6 +3,7 @@ import ollama
 from constants import OLLAMA_MODEL, OLLAMA_URL
 import logging
 import json
+import threading
 from .data_model import PatientSymptomList, MedicalCorpusInput, SymptomAnalysisResponse
 from .query_preprocess import QueryPreprocessor
 from .rag_retriever import MedicalRAGRetriever
@@ -24,15 +25,20 @@ class SymptomAnalyzer:
         
 
     def analyze(self, user_query,user_id, thread_id=None):
-        # Initialize conversation memory
+        # 1. Initialize Memory
+        yield {"type": "progress", "message": "Initializing reasoning engine..."}
+
         memory = ConversationMemory(self.db_manager, user_id, thread_id)
+        memory._ensure_thread() # Ensure thread exists in DB
         ctx = memory.get_working_context()
         # Build context string for prompts
         history_str = ctx['history']
         shared_str = json.dumps(ctx['shared_memory'], indent=1)
         thread_str = json.dumps(ctx['thread_memory'], indent=1)
         
-        
+        # 2. Pass 1: Clinical Reformulation
+        yield {"type": "progress", "message": "Structuring clinical presentation..."}
+
         system_prompt = """
            You are a clinical language formatter. Your only job is to convert 
             a patient's natural language symptom description into 5 structured 
@@ -99,6 +105,9 @@ class SymptomAnalyzer:
             symptom_text = "".join([f"{key}: {value}" for key, value in symptom.items()])
             processed_inputs.append(symptom)
         retrieved_docs = rag_retriever.retrieve(processed_inputs)
+
+        # 3. Pass 2: Query Generation
+        yield {"type": "progress", "message": "Formulating PubMed & ICD-11 queries..."}
         
 
         system_prompt_pass_2 = f"""
@@ -155,16 +164,21 @@ class SymptomAnalyzer:
         # Convert to dict for easier downstream use
         api_inputs = medical_corpus_api_input.model_dump()
         logger.info(f"Generated search queries: {api_inputs}")
+
+        yield {"type": "progress", "message": "Fetching external medical evidence..."}
+        
         pubmed_results = verifier.fetch_pubmed(api_inputs.get("pubmed", {}))
         icd11_results = verifier.fetch_icd11(api_inputs.get("icd11", {}))
+
+        # 4. Pass 3: Clinical Synthesis (Structured)
+        yield {"type": "progress", "message": "Synthesizing clinical assessment..."}
 
         system_prompt_pass_3 = """
             You are an expert clinical diagnostic assistant.
             You will be given comprehensive medical information gathered from multiple 
             authoritative sources about a patient's symptoms.
 
-            Your job is to synthesize ALL inputs into a clear, evidence-based 
-            clinical assessment.
+            Your job is to synthesize ALL inputs into a clear, evidence-based clinical assessment.
             ==== SHARED CONTEXT ====
             {shared_str}
             ==== WORKING MEMORY CONTEXT ====
@@ -179,7 +193,7 @@ class SymptomAnalyzer:
             - Follow-up questions must help narrow the differential diagnosis
             - Red flags must be specific, not generic
             - Never give a definitive diagnosis — always say "possible" or "likely"
-            - Keep language clear enough for a patient to understand"""
+        """
 
         user_prompt_pass_3 = f"""
             === PATIENT SYMPTOM VARIANTS & KEYWORDS ===
@@ -223,7 +237,7 @@ class SymptomAnalyzer:
                     "reason": "what it rules in or out"
                     }}
                 ],
-                "disclaimer": "This is not a medical diagnosis. Please consult a qualified healthcare professional."
+               
             }}
         """
 
@@ -247,7 +261,61 @@ class SymptomAnalyzer:
             "icd11_results": icd11_results,
             "symptom_analysis": symptom_analysis
         }
-        full_history = memory.fetch_entire_history()
+
+        chat_prompt = f"""
+            You are an expert clinical diagnostic assistant.
+            You will be given comprehensive medical information gathered from multiple 
+            authoritative sources about a patient's symptoms.
+
+            Your job is to synthesize ALL inputs into a clear, evidence-based clinical assessment.
+            Keep language clear enough for a patient to understand, but do not dumb down the medical accuracy. Use a compassionate tone.
+
+            ==== SHARED CONTEXT ====
+            {shared_str}
+            ==== WORKING MEMORY CONTEXT ====
+            {thread_str}
+
+            
+            Current shared memory context:
+            {shared_str}
+
+            Current thread memory context:
+            {thread_str}
+
+            Latest analysis result:
+            {json.dumps(response_data, indent=1)}
+
+            Please generate a natural language response to the patient that explains the findings in an easy-to-understand way. Use a compassionate tone and avoid medical jargon where possible. The response should help the patient understand their symptoms and the next steps they can take.
+        """
+        # Stream the natural language response token-by-token
+        stream_response = self.client.chat(
+            model=OLLAMA_MODEL,
+            messages=[
+                {"role": "system", "content": chat_prompt},
+                {"role": "user", "content": user_query}
+            ],
+            stream=True, 
+            options={"temperature": 0.4}
+        )
+
+        full_query_response = ""
+        for chunk in stream_response:
+            token = chunk['message']['content']
+            full_query_response += token
+            # Yield token for the typewriter effect in the Angular middle panel
+            yield {"type": "chat_stream", "token": token}
+            
+        thread = threading.Thread(target=self.make_history_updates, args=(response_data, user_query, memory))
+        # Start the thread
+        thread.start()
+        response_data["query_response"] = full_query_response
+        
+        yield {"type": "done"}
+        return response_data
+
+    def make_history_updates(self,response_data, user_query, memory: ConversationMemory):
+        
+        full_history = memory.fetch_thread_history()
         system_prompt_summarize_thread = """
             You are a conversation summarizer for a medical symptom analysis tool.
             Your job is to read the entire conversation history and generate a concise summary
@@ -265,7 +333,7 @@ class SymptomAnalyzer:
             messages.append({"role": turn['query'], "content": turn['query']})
             messages.append({"role": "assistant", "content": turn['analysis']})
         messages.append({"role": "user", "content": user_query})
-        messages.append({"role": "assistant", "content": response_data})
+        messages.append({"role": "assistant", "content": json.dumps(response_data, indent=1)})
         summary_response = self.client.chat(
             model=OLLAMA_MODEL,
             messages=messages,
@@ -290,7 +358,7 @@ class SymptomAnalyzer:
             messages.append({"role": turn['query'], "content": turn['query']})
             messages.append({"role": "assistant", "content": turn['analysis']})
         messages.append({"role": "user", "content": user_query})
-        messages.append({"role": "assistant", "content": response_data})
+        messages.append({"role": "assistant", "content": json.dumps(response_data, indent=1)})
         shared_summary_response = self.client.chat(
             model=OLLAMA_MODEL,
             messages=messages,
@@ -300,6 +368,25 @@ class SymptomAnalyzer:
         shared_summary = shared_summary_response['message']['content']
         memory.save_to_memory("shared_summary", shared_summary, shared=True)
         memory.save_turn(user_query, response_data)
+        # Update thread title based on summary
+        title_update_prompt = f"""
+            You are a thread title generator for a medical symptom analysis tool.
+            Based on the following conversation summary, generate a concise and descriptive thread title that captures the main clinical theme of the conversation. The title should be no more than 5 words and should help the user quickly identify the topic of this thread in the future.
 
-        return response_data
+            Conversation summary:
+            {thread_summary}
+
+            Generate an appropriate thread title:
+        """
+        title_response = self.client.chat(
+            model=OLLAMA_MODEL,
+            messages=[
+                {"role": "system", "content": title_update_prompt},
+            ],
+            format={"type": "string"},
+            options={"temperature": 0.5}
+        )
+        new_title = title_response['message']['content']
+        memory.update_thread_title(new_title)
+
     

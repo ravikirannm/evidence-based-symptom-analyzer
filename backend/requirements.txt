@@ -11,3 +11,4 @@ chromadb
 pymupdf 
 datasets
 biopython
+flask-cors
