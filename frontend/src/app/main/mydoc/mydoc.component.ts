@@ -98,8 +98,8 @@ export class MydocComponent {
                 {
                     next: (event: any) => {
                         if (!event || !event.type) return; // Ignore malformed events
-                        if(event.threadId) {
-                            this.selectedThread.setValue(event.threadId, { emitEvent: false }); // Update selected thread without triggering fetch
+                        if(event.thread_id) {
+                            this.selectedThread.setValue(event.thread_id, { emitEvent: false }); // Update selected thread without triggering fetch
                         }
                         switch (event.type) {
                             case 'progress':
@@ -149,7 +149,7 @@ export class MydocComponent {
             next: (response) => {
                 console.log('Analysis results from API:', response);
                 this.finalAnalysis = response;
-                this.symptomAnalysis = this.finalAnalysis.symptom_analysis;
+                this.symptomAnalysis = this.finalAnalysis.symptom_analysis ? this.finalAnalysis.symptom_analysis : null;
                 this.icd11Results = this.finalAnalysis?.icd11_results || [];
                 this.pubmedResults = this.finalAnalysis?.pubmed_results || [];
                 this.cdr.markForCheck(); // Trigger change detection to update the UI

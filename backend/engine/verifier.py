@@ -23,8 +23,8 @@ class MedicalQueryVerifier:
         # Format filters as PubMed 'Filter' tags
         if pubmed_input.get("filters"):
             filter_tags = [f"{f}[Filter]" for f in pubmed_input["filters"]]
-            filter_str = " AND ".join(filter_tags)
-            query = f"({query}) AND {filter_str}"
+            filter_str = " OR ".join(filter_tags)
+            query = f"({query}) AND ({filter_str})"
 
         try:
             # 1. Execute Search

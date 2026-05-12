@@ -35,7 +35,7 @@
   - Real-time streaming responses
 
 ### AI & ML Stack
-- **LLM**: Ollama with Qwen3.5:9b model for clinical reasoning
+- **LLM**: Ollama with Qwen2.5:7b model for clinical reasoning
 - **NLP**: 
   - Transformers library for semantic analysis
   - PyTorch for deep learning operations
@@ -108,7 +108,7 @@ Medical RAG Retriever (ChromaDB)
     ↓
 Medical Query Verifier
     ↓
-Ollama LLM (Qwen3.5:9b)
+Ollama LLM (Qwen2.5:7b)
     ↓
 Conversation Memory (MongoDB/PostgreSQL)
     ↓
@@ -198,7 +198,7 @@ The application will be accessible at `http://localhost:4200`
 Create a `.env` file in the backend directory with the following variables:
 ```
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=qwen3.5:9b
+OLLAMA_MODEL=qwen2.5:7b
 MONGODB_URI=mongodb://localhost:27017/symptom_analyzer
 POSTGRES_URI=postgresql://user:password@localhost:5432/symptom_analyzer
 ```

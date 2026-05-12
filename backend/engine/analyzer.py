@@ -39,14 +39,14 @@ class SymptomAnalyzer:
         # 2. Pass 1: Clinical Reformulation
         yield {"type": "progress", "thread_id": thread_id, "message": "Structuring clinical presentation..."}
 
-        system_prompt = """
+        system_prompt = f"""
            You are a clinical language formatter. Your only job is to convert 
             a patient's natural language symptom description into 5 structured 
             clinical reformulations. Each variant must use a different 
             clinical framing style to maximize medical entity coverage.
-            ==== SHARED CONTEXT ====
+            ==== SHARED CONTEXT FROM OTHER CONVERSATIONS ====
             {shared_str}
-            ==== WORKING MEMORY CONTEXT ====
+            ==== WORKING MEMORY CONTEXT FROM CURRENT CONVERSATION ====
             {thread_str}
             Rules:
             - Preserve all symptoms mentioned, do not add or invent new ones
@@ -64,7 +64,7 @@ class SymptomAnalyzer:
 
             Output format (strict JSON):
             [
-                {
+                {{
                     "variant": 1,
                     "style": "Standard Medical",
                     "clinical_presentation": "",
@@ -74,7 +74,7 @@ class SymptomAnalyzer:
                     "onset_pattern": "",
                     "associated_symptoms": [],
                     "patient_context": ""
-                },
+                }},
                 ... repeat for variants 2-5
             ]
         """
@@ -84,7 +84,7 @@ class SymptomAnalyzer:
         ]
         for turn in history_str:
             messages.append({"role": 'user', "content": turn['query']})
-            messages.append({"role": "assistant", "content": turn['analysis']})
+            messages.append({"role": "assistant", "content": json.dumps(turn['analysis'], indent=1)})
         messages.append({"role": "user", "content": user_query})
         logger.info(f"Analyzing symptoms: {user_query}")
         response = self.client.chat(
@@ -112,9 +112,9 @@ class SymptomAnalyzer:
 
         system_prompt_pass_2 = f"""
             You are a medical search query specialist.
-            ==== SHARED CONTEXT ====
+            ==== SHARED CONTEXT FROM OTHER CONVERSATIONS ====
             {shared_str}
-            ==== WORKING MEMORY CONTEXT ====
+            ==== WORKING MEMORY CONTEXT FROM CURRENT CONVERSATION ====
             {thread_str}
             Your ONLY job is to generate optimized search queries for PubMed"""
         user_prompt_pass_2 = f"""
@@ -179,9 +179,9 @@ class SymptomAnalyzer:
             authoritative sources about a patient's symptoms.
 
             Your job is to synthesize ALL inputs into a clear, evidence-based clinical assessment.
-            ==== SHARED CONTEXT ====
+            ==== SHARED CONTEXT FROM OTHER CONVERSATIONS ====
             {shared_str}
-            ==== WORKING MEMORY CONTEXT ====
+            ==== WORKING MEMORY CONTEXT FROM CURRENT CONVERSATION ====
             {thread_str}
 
             Output strict JSON only. No explanation. No preamble. No markdown.
@@ -270,9 +270,9 @@ class SymptomAnalyzer:
             Your job is to synthesize ALL inputs into a clear, evidence-based clinical assessment.
             Keep language clear enough for a patient to understand, but do not dumb down the medical accuracy. Use a compassionate tone.
 
-            ==== SHARED CONTEXT ====
+            ==== SHARED CONTEXT FROM OTHER CONVERSATIONS ====
             {shared_str}
-            ==== WORKING MEMORY CONTEXT ====
+            ==== WORKING MEMORY CONTEXT FROM CURRENT CONVERSATION ====
             {thread_str}
 
             
@@ -305,7 +305,7 @@ class SymptomAnalyzer:
             # Yield token for the typewriter effect in the Angular middle panel
             yield {"type": "chat_stream", "token": token}
             
-        thread = threading.Thread(target=self.make_history_updates, args=(response_data, user_query, memory))
+        thread = threading.Thread(target=self.make_history_updates, args=(response_data, user_query, memory, shared_str, thread_str))
         # Start the thread
         thread.start()
         response_data["query_response"] = full_query_response
@@ -313,28 +313,29 @@ class SymptomAnalyzer:
         yield {"type": "done"}
         return response_data
 
-    def make_history_updates(self,response_data, user_query, memory: ConversationMemory):
+    def make_history_updates(self,response_data, user_query, memory: ConversationMemory, shared_str: str, thread_str: str):
         
         full_history = memory.fetch_thread_history()
-        system_prompt_summarize_thread = """
+        system_prompt_summarize_thread = f"""
             You are a conversation summarizer for a medical symptom analysis tool.
             Your job is to read the entire conversation history and generate a concise summary
             that captures the patient's main symptoms, the clinical reasoning process, and the final assessment.
-            The summary should be in clear for medical person.
+            The summary should be in clear language for medical professionals.
             Current memory context:
-            {thread_str}
-            Conversation history:
-            
+            {thread_str if thread_str else "No current thread memory context."}
         """    
         messages = [
             {"role": "system", "content": system_prompt_summarize_thread},
         ]
         for turn in full_history:
-            messages.append({"role": turn['query'], "content": turn['query']})
-            messages.append({"role": "assistant", "content": turn['analysis']})
+            if turn['role'] == 'user':
+                messages.append({"role": "user", "content": turn['content']})
+            else:    
+                messages.append({"role": turn['role'], "content": turn['content']['query_response'] + json.dumps(turn['content']['symptom_analysis'], indent=1)})
         messages.append({"role": "user", "content": user_query})
         messages.append({"role": "assistant", "content": json.dumps(response_data, indent=1)})
-        # Create basic model response for thread summary
+        messages.append({"role": "system", "content": "Based on the above conversation, generate a concise summary that captures the patient's main symptoms, the clinical reasoning process, and the final assessment. The summary should be in clear language that a medical professional can quickly read to understand the case."})
+        # Create basic model response for thread summary        
         summary_response = self.client.chat(
             model=OLLAMA_MODEL,
             messages=messages,
@@ -342,29 +343,29 @@ class SymptomAnalyzer:
         )
         thread_summary = summary_response['message']['content'].strip()
         memory.save_to_memory("summary", thread_summary, shared=False)
-        system_prompt_summarize_shared = """
-            You are a summarizer for a medical symptom analysis tool.
-            Your job is to read the entire shared memory context and generate a concise summary
+        system_prompt_summarize_shared = f"""
+            You are a summarizer for a medical symptom analysis tool for doctor handling multiple patients.
+            Your job is to read the entire memory context and generate a concise summary
             Current shared memory context:
-            {shared_str}
-            Thread summary:
-            {thread_str}
-            Generate an updated shared memory summary that captures the patient's overall clinical picture and any important context that should be remembered across threads. This should be concise but informative for future conversations.
+            {shared_str if shared_str else "No current shared memory context."}
+            Current thread summary:
+            {thread_str if thread_str else "No current thread summary."}
+            
+            Generate an updated shared memory summary that captures the clinical picture of multiple patients and any important context that should be remembered across threads. This should be concise but informative for future conversations.
+            Provide only the updated shared memory summary as output text, no explanation or additional text or structure.
         """
         messages = [
             {"role": "system", "content": system_prompt_summarize_shared},
-        ]
-        for turn in full_history:
-            messages.append({"role": 'user', "content": turn['query']})
-            messages.append({"role": "assistant", "content": turn['analysis']})
-        messages.append({"role": "user", "content": user_query})
-        messages.append({"role": "assistant", "content": json.dumps(response_data, indent=1)})
+        ]        
         shared_summary_response = self.client.chat(
             model=OLLAMA_MODEL,
             messages=messages,
             options={"temperature": 0.5}
         )
+        
         shared_summary = shared_summary_response['message']['content'].strip()
+        logger.info(f"Thread summary: {thread_summary}")
+        logger.info(f"Shared summary: {shared_summary}")
         memory.save_to_memory("shared_summary", shared_summary, shared=True)
         memory.save_turn(user_query, response_data)
         # Update thread title based on summary
@@ -385,6 +386,8 @@ class SymptomAnalyzer:
             options={"temperature": 0.5}
         )
         new_title = title_response['message']['content'].strip()
-        memory.update_thread_title(new_title)
+        if new_title:
+            logger.info(f"Updating thread title to: {new_title}")
+            memory.update_thread_title(new_title)
 
     

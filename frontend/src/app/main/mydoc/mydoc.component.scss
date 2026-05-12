@@ -102,7 +102,7 @@
 
     .message-area {
         flex-grow: 1;
-        max-height: calc(100vh - 280px);
+        max-height: calc(100vh - 360px);
         overflow: auto;
         .msg {
             max-width: 80%;
@@ -111,8 +111,12 @@
             font-weight: 300;
 
             &.user {
+                background-color: global.$bg-color;
+                padding: 0.75rem 1rem;
+                border-radius: 0.5rem;
                 margin-left: auto;
                 text-align: right;
+                width: fit-content;
             }
         }
     }

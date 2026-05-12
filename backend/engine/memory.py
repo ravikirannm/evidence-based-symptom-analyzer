@@ -101,4 +101,4 @@ class ConversationMemory:
     def fetch_final_analysis(self):
         history_doc = self.db.mongo["history"].find_one({"thread_id": self.thread_id})
         history = history_doc.get("turns", []) if history_doc else []
-        return history[-1]["analysis"] if history else None
+        return history[-1]["analysis"] if history else {}
