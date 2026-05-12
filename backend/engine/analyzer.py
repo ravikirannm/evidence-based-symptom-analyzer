@@ -344,15 +344,29 @@ class SymptomAnalyzer:
         thread_summary = summary_response['message']['content'].strip()
         memory.save_to_memory("summary", thread_summary, shared=False)
         system_prompt_summarize_shared = f"""
-            You are a summarizer for a medical symptom analysis tool for doctor handling multiple patients.
-            Your job is to read the entire memory context and generate a concise summary
-            Current shared memory context:
-            {shared_str if shared_str else "No current shared memory context."}
-            Current thread summary:
-            {thread_str if thread_str else "No current thread summary."}
-            
-            Generate an updated shared memory summary that captures the clinical picture of multiple patients and any important context that should be remembered across threads. This should be concise but informative for future conversations.
-            Provide only the updated shared memory summary as output text, no explanation or additional text or structure.
+            You are a clinical intelligence accumulator for a multi-patient symptom analysis tool.
+            Your job is NOT to store anything about specific patients or diseases.
+            Instead, extract and preserve population-level diagnostic intelligence.
+
+            Current shared intelligence context:
+            {shared_str if shared_str else "None yet."}
+
+            Current session observations:
+            {thread_str if thread_str else "None."}
+
+            Update the shared intelligence summary to capture:
+            - Symptom patterns and co-occurrences appearing repeatedly across patients
+            - Diagnostic reasoning heuristics that proved effective
+            - Red flag symptom combinations worth heightened attention
+            - Emerging epidemiological signals (without linking to any individual)
+            - Differential diagnosis patterns worth remembering
+
+            Rules:
+            - Zero patient identifiers, ages, names, or individual disease mentions
+            - Write as reusable clinical reasoning knowledge
+            - Be concise. Prioritize signal over noise.
+
+            Output only the updated intelligence summary. No explanation or structure.
         """
         messages = [
             {"role": "system", "content": system_prompt_summarize_shared},
