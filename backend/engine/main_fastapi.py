@@ -63,8 +63,7 @@ async def analyze_symptoms(request: Request, user_id: Optional[str] = Cookie(Non
     thread_id = data.get('thread_id', str(uuid.uuid4()))
 
     async def event_generator():
-        # Note: If symptom_analyzer.analyze is synchronous, 
-        # consider running it in a threadpool or making it async.
+       
         for event in symptom_analyzer.analyze(user_query, user_id, thread_id):
             yield f"data: {json.dumps(event)}\n\n"
 
